@@ -6,7 +6,12 @@ output: github_document
 ---
 ```{r load_libraries}
 library(tidyverse)
+library(purrr)
+library(ggplot2)
 library(modelr)
+library(boot)
+library(broom)
+library(janitor)
 ```
 
 ### Problem 1
@@ -85,3 +90,89 @@ model_results |>
 
 
 ### Problem 2
+
+```{r data_dowload}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
+
+The boostrap is helpful when you'd like to perform inference for a parameter/ value/ summary that doesn't have an easy-to-write-down distribution in the usual repeated sampling framework. We'll focus on a simple linear regression with `tmax` as the response with `tmin` and `prcp` as the predictors, and are interested in the distribution of two quantities estimated from these data:
+
+-   $\hat{r}^2$
+-   $\log(\hat{\beta}_1 \times \hat{\beta}_2)$
+
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities.
+
+-   Plot the distribution of your estimates, and describe these in words.
+-   Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for $\hat{r}^2$ and $\log(\hat{\beta}_0 \times \hat{\beta}_1)$.
+
+Note: broom::glance() is helpful for extracting $\hat{r}^2$ from a fitted regression, and `broom::tidy()` (with some additional wrangling) should help in computing $\log(\hat{\beta}_1 \times \hat{\beta}_2)$.
+
+
+```{r}
+
+# Define the number of bootstrap samples
+n = 5000
+
+# Function to generate a bootstrap sample
+bootstrap_sample = function(df) {
+  sample_frac(df, replace = TRUE)
+}
+
+# Generate bootstrap samples
+boot_samples = map_dfr(1:n, ~{
+  df_sample = bootstrap_sample(weather_df)
+  model = lm(tmax ~ tmin + prcp, data = df_sample)
+  tidy_model = tidy(model)
+  glance_model = glance(model)
+
+  # Calculate log(beta1 * beta2), handling NA values
+  beta1 = tidy_model$estimate[tidy_model$term == "tmin"]
+  beta2 = tidy_model$estimate[tidy_model$term == "prcp"]
+  log_beta_product = ifelse(beta1 * beta2 > 0, log(beta1 * beta2), NA_real_)
+
+  # Return a dataframe with the necessary statistics
+  tibble(
+    r_squared = glance_model$r.squared,
+    log_beta_product = log_beta_product
+  )
+})
+
+# Drop NA values
+bootstrap_results_filtered = boot_samples |> filter(!is.na(log_beta_product))
+
+# Plotting the distributions using density plots
+ggplot(bootstrap_results_filtered, aes(x = r_squared)) +
+  geom_density() +
+  labs(title = "Density Distribution of R-squared Estimates", x = "R-squared", y = "Density")
+
+ggplot(bootstrap_results_filtered, aes(x = log_beta_product)) +
+  geom_density() +
+  labs(title = "Density Distribution of log(beta1 * beta2) Estimates", x = "log(beta1 * beta2)", y = "Density")
+
+# Calculating 95% confidence intervals
+ci_95 = bootstrap_results_filtered |>
+  summarize(
+    rsq_lower_ci = quantile(r_squared, 0.025, na.rm = TRUE),
+    rsq_upper_ci = quantile(r_squared, 0.975, na.rm = TRUE),
+    log_beta_lower_ci = quantile(log_beta_product, 0.025, na.rm = TRUE),
+    log_beta_upper_ci = quantile(log_beta_product, 0.975, na.rm = TRUE)
+  )
+
+# Displaying confidence intervals
+print(ci_95)
+
+```
+
+- The first plot displays the density of R-squared estimates from bootstrap samples, peaking around 0.92, indicating a strong and consistent relationship in the linear regression models.
+
+- The second plot shows the density of the log-transformed product of two regression coefficients (beta1 and beta2), with a peak near -6 and a long tail to the left, suggesting variability with some extreme values in the bootstrap samples.

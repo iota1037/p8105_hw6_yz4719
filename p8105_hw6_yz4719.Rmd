@@ -216,19 +216,17 @@ birth_weight <- read_csv("data/birthweight.csv") |>
 sum(is.na(birth_weight))
 ```
 
-```{r}
-
-# Fit a full model and perform stepwise regression
+```{r full_model_fit}
 full_model <- lm(bwt ~ ., data = birth_weight) 
 summary(full_model)
-
-# Fit a linear model using only significant variables
+```
+```{r model1}
 significant_model <- lm(bwt ~ bhead + blength + delwt + gaweeks + mrace + smoken + parity, data = birth_weight)
 
-# Display model summary
+
 significant_model |> broom::tidy() |> knitr::kable()
 
-# Plot of model residuals against fitted values
+
 birth_weight |> 
     add_predictions(significant_model) |> 
     add_residuals(significant_model) |> 
@@ -238,8 +236,11 @@ birth_weight |>
     labs(title = "Residuals versus Fitted Values", 
          x = "Predictions", 
          y = "Residuals")
+```
+- The regression model summary indicates that the variables bhead, blength, delwt, gaweeks, parity, babysexmale, mraceWhite, and smoken are statistically significant predictors of birth weight.The residuals plot shows that the residuals scatter around 0 without a clear funnel shape shows its not obvious heteroscedasticity.
 
-# Cross-Validation setup
+
+```{r Cross_Validation}
 cv_df <- crossv_mc(birth_weight, 100) |>
   mutate(
     train = map(train, as_tibble),
@@ -254,7 +255,6 @@ cv_df <- crossv_mc(birth_weight, 100) |>
     rmse_interaction = map2_dbl(model_interaction, test, ~rmse(model = .x, data = .y))
   )
 
-# Pivoting and plotting RMSE for Model Comparison
 cv_df |>
   pivot_longer(
     cols = c(rmse_significant, rmse_simple, rmse_interaction),
@@ -266,3 +266,6 @@ cv_df |>
   labs(title = "RMSE of Different Models")
 
 ```
+
+
+- The violin plot displays RMSE comparisons for three models; the rmse_significant model outperforms the others with the lowest RMSE as more reliable, while the rmse_interaction model shows the highest error, indicating poorer prediction.

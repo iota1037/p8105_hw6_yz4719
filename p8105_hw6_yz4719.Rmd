@@ -12,6 +12,8 @@ library(modelr)
 library(boot)
 library(broom)
 library(janitor)
+library(MASS)
+library(dplyr)
 ```
 
 ### Problem 1
@@ -31,7 +33,7 @@ homicide_df =
   ) |> 
   filter(victim_race %in% c("White", "Black")) |> 
   filter(!(city_state %in% c("Tulsa, AL", "Dallas, TX", "Phoenix, AZ", "Kansas City, MO"))) |> 
-  select(city_state, resolution, victim_age, victim_sex, victim_race)
+  dplyr::select(city_state, resolution, victim_age, victim_sex, victim_race)
 ```
 
 Next we fit a logistic regression model using only data from Baltimore, MD. We model `resolved` as the outcome and `victim_age`, `victim_sex`, and `victim_race` as predictors. We save the output as `baltimore_glm` so that we can apply `broom::tidy` to this object and obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing non-white victims to white victims.
@@ -48,7 +50,7 @@ baltimore_glm |>
     OR_CI_upper = exp(estimate + 1.96 * std.error),
     OR_CI_lower = exp(estimate - 1.96 * std.error)) |> 
   filter(term == "victim_sexMale") |> 
-  select(OR, OR_CI_lower, OR_CI_upper) |>
+  dplyr::select(OR, OR_CI_lower, OR_CI_upper) |>
   knitr::kable(digits = 3)
 ```
 
@@ -62,14 +64,14 @@ model_results =
     models = map(data, \(df) glm(resolution ~ victim_age + victim_sex + victim_race, 
                              family = binomial(), data = df)),
     tidy_models = map(models, broom::tidy)) |> 
-  select(-models, -data) |> 
+  dplyr::select(-models, -data) |> 
   unnest(cols = tidy_models) |> 
   mutate(
     OR = exp(estimate), 
     OR_CI_upper = exp(estimate + 1.96 * std.error),
     OR_CI_lower = exp(estimate - 1.96 * std.error)) |> 
   filter(term == "victim_sexMale") |> 
-  select(city_state, OR, OR_CI_lower, OR_CI_upper)
+  dplyr::select(city_state, OR, OR_CI_lower, OR_CI_upper)
 
 model_results |>
   slice(1:5) |> 
@@ -102,7 +104,7 @@ weather_df =
     name = recode(id, USW00094728 = "CentralPark_NY"),
     tmin = tmin / 10,
     tmax = tmax / 10) |>
-  select(name, id, everything())
+  dplyr::select(name, id, everything())
 ```
 
 The boostrap is helpful when you'd like to perform inference for a parameter/ value/ summary that doesn't have an easy-to-write-down distribution in the usual repeated sampling framework. We'll focus on a simple linear regression with `tmax` as the response with `tmin` and `prcp` as the predictors, and are interested in the distribution of two quantities estimated from these data:
@@ -118,7 +120,7 @@ Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of 
 Note: broom::glance() is helpful for extracting $\hat{r}^2$ from a fitted regression, and `broom::tidy()` (with some additional wrangling) should help in computing $\log(\hat{\beta}_1 \times \hat{\beta}_2)$.
 
 
-```{r}
+```{r problem 2}
 
 # Define the number of bootstrap samples
 n = 5000
@@ -176,3 +178,91 @@ print(ci_95)
 - The first plot displays the density of R-squared estimates from bootstrap samples, peaking around 0.92, indicating a strong and consistent relationship in the linear regression models.
 
 - The second plot shows the density of the log-transformed product of two regression coefficients (beta1 and beta2), with a peak near -6 and a long tail to the left, suggesting variability with some extreme values in the bootstrap samples.
+
+
+### Problem 3
+
+```{r}
+
+birth_weight <- read_csv("data/birthweight.csv") |>
+  clean_names() |> 
+  mutate(
+    babysex = case_match(
+      babysex,
+      1 ~ 'male',
+      2 ~ 'female'),
+    frace = case_match(
+      frace, 
+      1 ~ "White", 
+      2 ~ "Black", 
+      3 ~ "Asian", 
+      4 ~ "Puerto Rican", 
+      8 ~ "Other", 
+      9 ~ "Unknown"),
+    malform = case_match(
+      malform, 
+      0 ~ 'absent',
+      1 ~ 'present'),
+    mrace = case_match(
+      mrace, 
+      1 ~ "White", 
+      2 ~ "Black", 
+      3 ~ "Asian", 
+      4 ~ "Puerto Rican", 
+      8 ~ "Other")
+  )
+
+# Check for missing values
+sum(is.na(birth_weight))
+```
+
+```{r}
+
+# Fit a full model and perform stepwise regression
+full_model <- lm(bwt ~ ., data = birth_weight) 
+summary(full_model)
+
+# Fit a linear model using only significant variables
+significant_model <- lm(bwt ~ bhead + blength + delwt + gaweeks + mrace + smoken + parity, data = birth_weight)
+
+# Display model summary
+significant_model |> broom::tidy() |> knitr::kable()
+
+# Plot of model residuals against fitted values
+birth_weight |> 
+    add_predictions(significant_model) |> 
+    add_residuals(significant_model) |> 
+    ggplot(aes(x = pred, y = resid)) +
+    geom_point()  + 
+    geom_smooth(method = "lm", se = FALSE) + 
+    labs(title = "Residuals versus Fitted Values", 
+         x = "Predictions", 
+         y = "Residuals")
+
+# Cross-Validation setup
+cv_df <- crossv_mc(birth_weight, 100) |>
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble),
+    model_significant = map(train, ~lm(bwt ~ bhead + blength + delwt + gaweeks + mrace + smoken + parity, data = .x)),
+    model_simple = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model_interaction = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x))
+  ) |>
+  mutate(
+    rmse_significant = map2_dbl(model_significant, test, ~rmse(model = .x, data = .y)),
+    rmse_simple = map2_dbl(model_simple, test, ~rmse(model = .x, data = .y)),
+    rmse_interaction = map2_dbl(model_interaction, test, ~rmse(model = .x, data = .y))
+  )
+
+# Pivoting and plotting RMSE for Model Comparison
+cv_df |>
+  pivot_longer(
+    cols = c(rmse_significant, rmse_simple, rmse_interaction),
+    names_to = "model",
+    values_to = "rmse"
+  ) |>
+  ggplot(aes(x = model, y = rmse, fill = model)) +
+  geom_violin() +
+  labs(title = "RMSE of Different Models")
+
+```
